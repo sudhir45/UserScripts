@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Hover Image Preview
 // @namespace    https://local.userscripts/
-// @version      2.0.1
+// @version      2.2.0
 // @description  Enlarge images on hover and provide open/download controls.
-// @author       Sudhir
+// @author       Hehe
 // @match        http://*/*
 // @match        https://*/*
 // @run-at       document-idle
@@ -58,9 +58,12 @@
   let hideTimer = 0;
   let hoveredElement = null;
   let currentTarget = null;
+  let currentImage = null;
   let currentUrl = null;
   let requestNumber = 0;
   let pinned = false;
+
+  const dismissedUrls = new Set();
 
   let pointer = {
     x: innerWidth / 2,
@@ -76,15 +79,49 @@
   root.innerHTML = `
     <div class="hip-stage">
       <div class="hip-status">Loading…</div>
-      <img class="hip-image" alt="Hover preview">
+
+      <img
+        class="hip-image"
+        alt="Hover preview"
+        draggable="false"
+        title="Click to close. Reopen with Shift + hover."
+      >
     </div>
 
     <div class="hip-bar">
       <span class="hip-info"></span>
-      <button type="button" data-action="download">Download</button>
-      <button type="button" data-action="open">Open</button>
-      <button type="button" data-action="pin">Pin</button>
-      <button type="button" data-action="close">×</button>
+
+      <button
+        type="button"
+        data-action="download"
+        title="Download image"
+      >
+        Download
+      </button>
+
+      <button
+        type="button"
+        data-action="open"
+        title="Open image in a new tab"
+      >
+        Open
+      </button>
+
+      <button
+        type="button"
+        data-action="pin"
+        title="Keep preview open"
+      >
+        Pin
+      </button>
+
+      <button
+        type="button"
+        data-action="close"
+        title="Close preview"
+      >
+        ×
+      </button>
     </div>
   `;
 
@@ -103,8 +140,8 @@
       border: 1px solid rgba(255, 255, 255, 0.24);
       border-radius: 9px;
       box-shadow: 0 12px 44px rgba(0, 0, 0, 0.58);
-      font: 12px/1.3 system-ui, -apple-system,
-        BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font: 12px/1.3 system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
     }
 
     #${ROOT_ID},
@@ -125,6 +162,7 @@
       min-height: 80px;
       overflow: hidden;
       background: #0b0b0c;
+      cursor: pointer;
     }
 
     #${ROOT_ID} .hip-image {
@@ -196,17 +234,10 @@
     }
   `;
 
-  const previewImage =
-    root.querySelector('.hip-image');
-
-  const status =
-    root.querySelector('.hip-status');
-
-  const info =
-    root.querySelector('.hip-info');
-
-  const pinButton =
-    root.querySelector('[data-action="pin"]');
+  const previewImage = root.querySelector('.hip-image');
+  const status = root.querySelector('.hip-status');
+  const info = root.querySelector('.hip-info');
+  const pinButton = root.querySelector('[data-action="pin"]');
 
   document.documentElement.append(style, root);
 
@@ -215,43 +246,28 @@
   }
 
   function absoluteUrl(value) {
-    if (
-      !value ||
-      typeof value !== 'string'
-    ) {
+    if (!value || typeof value !== 'string') {
       return null;
     }
 
     const cleaned = value
       .trim()
-      .replace(
-        /^url\((['"]?)(.*?)\1\)$/i,
-        '$2'
-      );
+      .replace(/^url\((['"]?)(.*?)\1\)$/i, '$2');
 
-    if (
-      !cleaned ||
-      cleaned.startsWith('#')
-    ) {
+    if (!cleaned || cleaned.startsWith('#')) {
       return null;
     }
 
     try {
-      const url =
-        new URL(cleaned, document.baseURI);
+      const url = new URL(cleaned, document.baseURI);
 
       if (
-        [
-          'http:',
-          'https:',
-          'blob:',
-          'data:'
-        ].includes(url.protocol)
+        ['http:', 'https:', 'blob:', 'data:'].includes(url.protocol)
       ) {
         return url.href;
       }
     } catch (_) {
-      return null;
+      // Invalid URL.
     }
 
     return null;
@@ -260,10 +276,7 @@
   function addUnique(array, value) {
     const url = absoluteUrl(value);
 
-    if (
-      url &&
-      !array.includes(url)
-    ) {
+    if (url && !array.includes(url)) {
       array.push(url);
     }
   }
@@ -279,72 +292,42 @@
 
     try {
       const url = new URL(original);
-      const host =
-        url.hostname.toLowerCase();
+      const host = url.hostname.toLowerCase();
 
       if (
-        /^(?:i|img)\.ytimg\.com$/
-          .test(host) &&
-        /\/vi(?:_webp)?\//
-          .test(url.pathname)
+        /^(?:i|img)\.ytimg\.com$/.test(host) &&
+        /\/vi(?:_webp)?\//.test(url.pathname)
       ) {
-        const webpPath =
-          url.pathname.replace(
-            /\/(?:default|mqdefault|hqdefault|sddefault|maxresdefault)(?:_live)?\.(?:jpg|webp)$/i,
-            '/maxresdefault.webp'
-          );
+        const webpPath = url.pathname.replace(
+          /\/(?:default|mqdefault|hqdefault|sddefault|maxresdefault)(?:_live)?\.(?:jpg|webp)$/i,
+          '/maxresdefault.webp'
+        );
 
-        const jpgPath =
-          url.pathname.replace(
-            /\/(?:default|mqdefault|hqdefault|sddefault|maxresdefault)(?:_live)?\.(?:jpg|webp)$/i,
-            '/maxresdefault.jpg'
-          );
+        const jpgPath = url.pathname.replace(
+          /\/(?:default|mqdefault|hqdefault|sddefault|maxresdefault)(?:_live)?\.(?:jpg|webp)$/i,
+          '/maxresdefault.jpg'
+        );
 
-        if (
-          webpPath !== url.pathname
-        ) {
-          const candidate =
-            new URL(url);
-
-          candidate.pathname =
-            webpPath;
-
-          upgraded.push(
-            candidate.href
-          );
+        if (webpPath !== url.pathname) {
+          const candidate = new URL(url);
+          candidate.pathname = webpPath;
+          upgraded.push(candidate.href);
         }
 
-        if (
-          jpgPath !== url.pathname
-        ) {
-          const candidate =
-            new URL(url);
-
-          candidate.pathname =
-            jpgPath;
-
-          upgraded.push(
-            candidate.href
-          );
+        if (jpgPath !== url.pathname) {
+          const candidate = new URL(url);
+          candidate.pathname = jpgPath;
+          upgraded.push(candidate.href);
         }
       }
 
       if (
         host === 'pbs.twimg.com' &&
-        url.pathname
-          .startsWith('/media/')
+        url.pathname.startsWith('/media/')
       ) {
-        const candidate =
-          new URL(url);
-
-        candidate.searchParams.set(
-          'name',
-          'orig'
-        );
-
-        upgraded.push(
-          candidate.href
-        );
+        const candidate = new URL(url);
+        candidate.searchParams.set('name', 'orig');
+        upgraded.push(candidate.href);
       }
     } catch (_) {
       // Keep original URL.
@@ -363,22 +346,16 @@
     return srcset
       .split(',')
       .map(part => {
-        const match =
-          part.trim().match(
-            /^(\S+)(?:\s+(\d+(?:\.\d+)?)(w|x))?$/
-          );
+        const match = part
+          .trim()
+          .match(/^(\S+)(?:\s+(\d+(?:\.\d+)?)(w|x))?$/);
 
         if (!match) {
           return null;
         }
 
         const weight = match[2]
-          ? Number(match[2]) *
-            (
-              match[3] === 'x'
-                ? 10000
-                : 1
-            )
+          ? Number(match[2]) * (match[3] === 'x' ? 10000 : 1)
           : 0;
 
         return {
@@ -387,16 +364,12 @@
         };
       })
       .filter(Boolean)
-      .sort(
-        (a, b) =>
-          b.weight - a.weight
-      )
+      .sort((a, b) => b.weight - a.weight)
       .map(item => item.url);
   }
 
   function pointInside(element) {
-    const rect =
-      element.getBoundingClientRect();
+    const rect = element.getBoundingClientRect();
 
     return (
       rect.width > 0 &&
@@ -409,39 +382,30 @@
   }
 
   function largeEnough(element) {
-    const rect =
-      element.getBoundingClientRect();
+    const rect = element.getBoundingClientRect();
 
     return (
-      Math.max(
-        rect.width,
-        rect.height
-      ) >= settings.minSizePx
+      Math.max(rect.width, rect.height) >= settings.minSizePx
     );
   }
 
   function usableImage(element) {
     return (
-      element instanceof
-        HTMLImageElement &&
+      element instanceof HTMLImageElement &&
       largeEnough(element) &&
       pointInside(element)
     );
   }
 
   function imageAtPointer(element) {
-    const closest =
-      element.closest?.('img');
+    const closest = element.closest?.('img');
 
     if (usableImage(closest)) {
       return closest;
     }
 
     const stack =
-      document.elementsFromPoint?.(
-        pointer.x,
-        pointer.y
-      ) || [];
+      document.elementsFromPoint?.(pointer.x, pointer.y) || [];
 
     for (const stacked of stack) {
       if (usableImage(stacked)) {
@@ -449,8 +413,7 @@
       }
 
       const shadowImage =
-        stacked.shadowRoot
-          ?.querySelector?.('img');
+        stacked.shadowRoot?.querySelector?.('img');
 
       if (usableImage(shadowImage)) {
         return shadowImage;
@@ -461,22 +424,17 @@
 
     for (
       let node = element;
-      node &&
-      node !== document.body &&
-      depth < 4;
-      node = node.parentElement,
-      depth += 1
+      node && node !== document.body && depth < 4;
+      node = node.parentElement, depth += 1
     ) {
-      const nearby =
-        node.querySelector?.('img');
+      const nearby = node.querySelector?.('img');
 
       if (usableImage(nearby)) {
         return nearby;
       }
 
       const shadowImage =
-        node.shadowRoot
-          ?.querySelector?.('img');
+        node.shadowRoot?.querySelector?.('img');
 
       if (usableImage(shadowImage)) {
         return shadowImage;
@@ -489,121 +447,72 @@
   function attributeUrls(element) {
     const urls = [];
 
-    for (
-      const name of IMAGE_ATTRIBUTES
-    ) {
-      addUnique(
-        urls,
-        element.getAttribute?.(name)
-      );
+    for (const name of IMAGE_ATTRIBUTES) {
+      addUnique(urls, element.getAttribute?.(name));
     }
 
     return urls;
   }
 
   function linkedImageUrl(element) {
-    const anchor =
-      element.closest?.('a[href]');
+    const anchor = element.closest?.('a[href]');
+    const href = absoluteUrl(anchor?.href);
 
-    const href =
-      absoluteUrl(anchor?.href);
-
-    return (
-      href &&
-      IMAGE_EXTENSION.test(href)
-    )
+    return href && IMAGE_EXTENSION.test(href)
       ? href
       : null;
   }
 
   function backgroundImageUrl(element) {
     const background =
-      getComputedStyle(element)
-        .backgroundImage;
+      getComputedStyle(element).backgroundImage;
 
-    if (
-      !background ||
-      background === 'none'
-    ) {
+    if (!background || background === 'none') {
       return null;
     }
 
     const match =
-      background.match(
-        /url\((['"]?)(.*?)\1\)/i
-      );
+      background.match(/url\((['"]?)(.*?)\1\)/i);
 
     return match
       ? absoluteUrl(match[2])
       : null;
   }
 
-  function candidatesForImage(
-    imageElement,
-    hovered
-  ) {
+  function candidatesForImage(imageElement, hovered) {
     const rawUrls = [];
 
     if (settings.preferLinkedImage) {
-      addUnique(
-        rawUrls,
-        linkedImageUrl(hovered)
-      );
+      addUnique(rawUrls, linkedImageUrl(hovered));
     }
 
-    for (
-      const url of
-      attributeUrls(imageElement)
-    ) {
+    for (const url of attributeUrls(imageElement)) {
       addUnique(rawUrls, url);
     }
 
-    for (
-      const url of
-      srcsetUrls(imageElement.srcset)
-    ) {
+    for (const url of srcsetUrls(imageElement.srcset)) {
       addUnique(rawUrls, url);
     }
 
     const pictureSources =
       imageElement
         .closest?.('picture')
-        ?.querySelectorAll?.(
-          'source[srcset]'
-        ) || [];
+        ?.querySelectorAll?.('source[srcset]') || [];
 
-    for (
-      const source of pictureSources
-    ) {
-      for (
-        const url of
-        srcsetUrls(source.srcset)
-      ) {
+    for (const source of pictureSources) {
+      for (const url of srcsetUrls(source.srcset)) {
         addUnique(rawUrls, url);
       }
     }
 
-    addUnique(
-      rawUrls,
-      imageElement.currentSrc
-    );
-
-    addUnique(
-      rawUrls,
-      imageElement.src
-    );
+    addUnique(rawUrls, imageElement.currentSrc);
+    addUnique(rawUrls, imageElement.src);
 
     const candidates = [];
 
     for (const rawUrl of rawUrls) {
-      for (
-        const upgraded of
-        upgradedUrls(rawUrl)
-      ) {
-        addUnique(
-          candidates,
-          upgraded
-        );
+      for (const upgraded of upgradedUrls(rawUrl)) {
+        addUnique(candidates, upgraded);
       }
     }
 
@@ -618,15 +527,11 @@
       return null;
     }
 
-    const imageElement =
-      imageAtPointer(element);
+    const imageElement = imageAtPointer(element);
 
     if (imageElement) {
       const candidates =
-        candidatesForImage(
-          imageElement,
-          element
-        );
+        candidatesForImage(imageElement, element);
 
       if (candidates.length) {
         return {
@@ -634,37 +539,27 @@
           label:
             imageElement.alt ||
             imageElement.title ||
-            imageElement.getAttribute(
-              'aria-label'
-            ) ||
+            imageElement.getAttribute('aria-label') ||
             ''
         };
       }
     }
 
-    const linked =
-      linkedImageUrl(element);
+    const linked = linkedImageUrl(element);
 
     if (linked) {
       return {
-        candidates:
-          upgradedUrls(linked),
+        candidates: upgradedUrls(linked),
         label: element.title || ''
       };
     }
 
-    for (
-      const attributeUrl of
-      attributeUrls(element)
-    ) {
+    for (const attributeUrl of attributeUrls(element)) {
       if (largeEnough(element)) {
         return {
-          candidates:
-            upgradedUrls(attributeUrl),
+          candidates: upgradedUrls(attributeUrl),
           label:
-            element.getAttribute(
-              'aria-label'
-            ) ||
+            element.getAttribute('aria-label') ||
             element.title ||
             ''
         };
@@ -676,27 +571,18 @@
     for (
       let node = element;
       node &&
-      node !==
-        document.documentElement &&
+      node !== document.documentElement &&
       node !== document.body &&
       depth < 3;
-      node = node.parentElement,
-      depth += 1
+      node = node.parentElement, depth += 1
     ) {
-      const backgroundUrl =
-        backgroundImageUrl(node);
+      const backgroundUrl = backgroundImageUrl(node);
 
-      if (
-        backgroundUrl &&
-        largeEnough(node)
-      ) {
+      if (backgroundUrl && largeEnough(node)) {
         return {
-          candidates:
-            upgradedUrls(backgroundUrl),
+          candidates: upgradedUrls(backgroundUrl),
           label:
-            node.getAttribute(
-              'aria-label'
-            ) ||
+            node.getAttribute('aria-label') ||
             node.title ||
             ''
         };
@@ -712,41 +598,26 @@
     try {
       const parsed = new URL(url);
 
-      filename =
-        decodeURIComponent(
-          parsed.pathname
-            .split('/')
-            .pop() ||
-          ''
-        );
+      filename = decodeURIComponent(
+        parsed.pathname.split('/').pop() || ''
+      );
 
       if (
-        !/\.[a-z0-9]{2,5}$/i
-          .test(filename) &&
-        parsed.searchParams
-          .get('format')
+        !/\.[a-z0-9]{2,5}$/i.test(filename) &&
+        parsed.searchParams.get('format')
       ) {
-        filename +=
-          `.${parsed.searchParams.get(
-            'format'
-          )}`;
+        filename += `.${parsed.searchParams.get('format')}`;
       }
     } catch (_) {
-      filename = '';
+      // Use fallback below.
     }
 
     filename = filename
-      .replace(
-        /[\\/:*?"<>|\x00-\x1F]/g,
-        '_'
-      )
+      .replace(/[\\/:*?"<>|\x00-\x1F]/g, '_')
       .slice(0, 180);
 
-    return (
-      filename &&
-      /\.[a-z0-9]{2,5}$/i
-        .test(filename)
-    )
+    return filename &&
+      /\.[a-z0-9]{2,5}$/i.test(filename)
       ? filename
       : `image-${Date.now()}.jpg`;
   }
@@ -781,8 +652,7 @@
 
   function positionPreview() {
     if (
-      !root.classList
-        .contains('hip-visible') ||
+      !root.classList.contains('hip-visible') ||
       pinned
     ) {
       return;
@@ -790,31 +660,17 @@
 
     const gap = 18;
     const margin = 8;
-
-    const rect =
-      root.getBoundingClientRect();
+    const rect = root.getBoundingClientRect();
 
     let left = pointer.x + gap;
     let top = pointer.y + gap;
 
-    if (
-      left + rect.width >
-      innerWidth - margin
-    ) {
-      left =
-        pointer.x -
-        rect.width -
-        gap;
+    if (left + rect.width > innerWidth - margin) {
+      left = pointer.x - rect.width - gap;
     }
 
-    if (
-      top + rect.height >
-      innerHeight - margin
-    ) {
-      top =
-        pointer.y -
-        rect.height -
-        gap;
+    if (top + rect.height > innerHeight - margin) {
+      top = pointer.y - rect.height - gap;
     }
 
     root.style.left =
@@ -824,47 +680,30 @@
       `${Math.max(margin, top)}px`;
   }
 
-  function loadCandidate(
-    media,
-    index,
-    thisRequest
-  ) {
-    if (
-      thisRequest !== requestNumber
-    ) {
+  function loadCandidate(media, index, thisRequest) {
+    if (thisRequest !== requestNumber) {
       return;
     }
 
-    if (
-      index >= media.candidates.length
-    ) {
-      status.textContent =
-        'Preview unavailable';
-
+    if (index >= media.candidates.length) {
+      status.textContent = 'Preview unavailable';
       status.style.display = '';
       root.style.visibility = '';
-
       positionPreview();
       return;
     }
 
-    const url =
-      media.candidates[index];
+    const url = media.candidates[index];
 
     previewImage.onload = () => {
-      if (
-        thisRequest !== requestNumber
-      ) {
+      if (thisRequest !== requestNumber) {
         return;
       }
 
       currentUrl = url;
 
       status.style.display = 'none';
-
-      previewImage.classList.add(
-        'hip-active'
-      );
+      previewImage.classList.add('hip-active');
 
       setInfo(media);
 
@@ -873,30 +712,23 @@
     };
 
     previewImage.onerror = () => {
-      loadCandidate(
-        media,
-        index + 1,
-        thisRequest
-      );
+      loadCandidate(media, index + 1, thisRequest);
     };
 
     previewImage.src = url;
   }
 
   function showPreview(media, target) {
-    const thisRequest =
-      ++requestNumber;
+    const thisRequest = ++requestNumber;
 
+    currentImage = media;
     currentTarget = target;
     currentUrl = null;
 
     previewImage.onload = null;
     previewImage.onerror = null;
     previewImage.removeAttribute('src');
-
-    previewImage.classList.remove(
-      'hip-active'
-    );
+    previewImage.classList.remove('hip-active');
 
     status.textContent = 'Loading…';
     status.style.display = '';
@@ -906,17 +738,12 @@
     root.classList.add('hip-visible');
     root.style.visibility = 'hidden';
 
-    loadCandidate(
-      media,
-      0,
-      thisRequest
-    );
+    loadCandidate(media, 0, thisRequest);
 
     setTimeout(() => {
       if (
         thisRequest === requestNumber &&
-        root.classList
-          .contains('hip-visible')
+        root.classList.contains('hip-visible')
       ) {
         root.style.visibility = '';
         positionPreview();
@@ -940,21 +767,20 @@
     previewImage.onload = null;
     previewImage.onerror = null;
     previewImage.removeAttribute('src');
-
-    previewImage.classList.remove(
-      'hip-active'
-    );
+    previewImage.classList.remove('hip-active');
 
     currentTarget = null;
+    currentImage = null;
     currentUrl = null;
   }
 
   function scheduleHide() {
     clearTimeout(hideTimer);
 
-    hideTimer = setTimeout(() => {
-      hidePreview();
-    }, settings.hideDelayMs);
+    hideTimer = setTimeout(
+      () => hidePreview(),
+      settings.hideDelayMs
+    );
   }
 
   function setPinned(value) {
@@ -977,12 +803,70 @@
     }
   }
 
-  function fallbackDownload(
-    url,
-    filename
-  ) {
-    const anchor =
-      document.createElement('a');
+  function dismissByClick() {
+    if (currentUrl) {
+      dismissedUrls.add(currentUrl);
+    }
+
+    setPinned(false);
+    hidePreview(true);
+  }
+
+  function isDismissed(media) {
+    return Boolean(
+      media?.candidates?.some(url =>
+        dismissedUrls.has(url)
+      )
+    );
+  }
+
+  function restoreDismissed(media) {
+    for (const url of media.candidates) {
+      dismissedUrls.delete(url);
+    }
+  }
+
+  function reopenDismissedAtPointer() {
+    if (
+      !settings.enabled ||
+      pinned ||
+      root.classList.contains('hip-visible')
+    ) {
+      return false;
+    }
+
+    const target = document.elementFromPoint(
+      pointer.x,
+      pointer.y
+    );
+
+    if (
+      !(target instanceof Element) ||
+      root.contains(target)
+    ) {
+      return false;
+    }
+
+    const media = findImage(target);
+
+    if (!isDismissed(media)) {
+      return false;
+    }
+
+    restoreDismissed(media);
+
+    hoveredElement = target;
+
+    clearTimeout(hideTimer);
+    clearTimeout(hoverTimer);
+
+    showPreview(media, target);
+
+    return true;
+  }
+
+  function fallbackDownload(url, filename) {
+    const anchor = document.createElement('a');
 
     anchor.href = url;
     anchor.download = filename;
@@ -1006,17 +890,11 @@
         name: filename,
         saveAs: true,
         onerror: () => {
-          fallbackDownload(
-            currentUrl,
-            filename
-          );
+          fallbackDownload(currentUrl, filename);
         }
       });
     } catch (_) {
-      fallbackDownload(
-        currentUrl,
-        filename
-      );
+      fallbackDownload(currentUrl, filename);
     }
   }
 
@@ -1062,6 +940,14 @@
         return;
       }
 
+      if (isDismissed(media)) {
+        if (!event.shiftKey) {
+          return;
+        }
+
+        restoreDismissed(media);
+      }
+
       hoveredElement = target;
 
       clearTimeout(hideTimer);
@@ -1091,9 +977,7 @@
         hoveredElement &&
         (
           event.target === hoveredElement ||
-          hoveredElement.contains?.(
-            event.target
-          )
+          hoveredElement.contains?.(event.target)
         )
       ) {
         hoveredElement = null;
@@ -1125,9 +1009,16 @@
     'click',
     event => {
       const action =
-        event.target
-          .closest('button')
+        event.target.closest('button')
           ?.dataset.action;
+
+      if (
+        !action &&
+        event.target.closest('.hip-stage')
+      ) {
+        dismissByClick();
+        return;
+      }
 
       if (action === 'download') {
         downloadCurrent();
@@ -1159,8 +1050,14 @@
     'keydown',
     event => {
       if (
-        !root.classList
-          .contains('hip-visible')
+        event.key === 'Shift' &&
+        reopenDismissedAtPointer()
+      ) {
+        return;
+      }
+
+      if (
+        !root.classList.contains('hip-visible')
       ) {
         return;
       }
@@ -1168,10 +1065,7 @@
       if (event.key === 'Escape') {
         setPinned(false);
         hidePreview(true);
-        return;
-      }
-
-      if (
+      } else if (
         event.key.toLowerCase() === 'd' &&
         !event.ctrlKey &&
         !event.metaKey &&
@@ -1181,11 +1075,8 @@
           document.activeElement?.tagName;
 
         if (
-          ![
-            'INPUT',
-            'TEXTAREA',
-            'SELECT'
-          ].includes(tag)
+          !['INPUT', 'TEXTAREA', 'SELECT']
+            .includes(tag)
         ) {
           event.preventDefault();
           downloadCurrent();
@@ -1221,18 +1112,17 @@
       ? 'Disable Hover Image Preview'
       : 'Enable Hover Image Preview',
     () => {
-      settings.enabled =
-        !settings.enabled;
+      settings.enabled = !settings.enabled;
 
       saveSettings();
       hidePreview(true);
 
       alert(
-        `Hover Image Preview is now ` +
-        `${settings.enabled
-          ? 'enabled'
-          : 'disabled'}. ` +
-        `Reload to update the menu label.`
+        `Hover Image Preview is now ${
+          settings.enabled
+            ? 'enabled'
+            : 'disabled'
+        }. Reload to update this menu label.`
       );
     }
   );
@@ -1262,9 +1152,7 @@
         return;
       }
 
-      settings.delayMs =
-        Math.round(number);
-
+      settings.delayMs = Math.round(number);
       saveSettings();
     }
   );
@@ -1293,16 +1181,14 @@
       const widthNumber = Number(width);
       const heightNumber = Number(height);
 
-      const valid =
-        [widthNumber, heightNumber]
-          .every(
-            number =>
-              Number.isFinite(number) &&
-              number >= 20 &&
-              number <= 100
-          );
-
-      if (!valid) {
+      if (
+        ![widthNumber, heightNumber].every(
+          number =>
+            Number.isFinite(number) &&
+            number >= 20 &&
+            number <= 100
+        )
+      ) {
         alert(
           'Width and height must be numbers from 20 to 100.'
         );
@@ -1326,11 +1212,7 @@
   GM_registerMenuCommand(
     'Reset settings',
     () => {
-      Object.assign(
-        settings,
-        defaults
-      );
-
+      Object.assign(settings, defaults);
       saveSettings();
 
       alert(
