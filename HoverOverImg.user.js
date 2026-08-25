@@ -3,7 +3,7 @@
 // @namespace    https://local.userscripts/
 // @version      2.0.0
 // @description  Enlarge images on hover and provide open/download controls.
-// @author       You
+// @author       NaN
 // @match        http://*/*
 // @match        https://*/*
 // @run-at       document-idle
